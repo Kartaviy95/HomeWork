@@ -27,7 +27,8 @@ def log_and_print(message, level="info"):
 
 def find_changed_folders(repo_path, days):
     """
-    Определяет измененные папки в репозитории за последние 'days' дней.
+    Определяет измененные папки в репозитории за последние 'days' дней, включая папки addons_core, addons_islands и server.
+    Возвращает список кортежей вида (папка, категория), где категория это родительская папка.
     """
     git_after = (datetime.datetime.now() - datetime.timedelta(days=days)).strftime("%Y-%m-%d")
     git_params = ["git", "log", "--after", git_after, "--name-only", "--no-merges"]
@@ -35,19 +36,31 @@ def find_changed_folders(repo_path, days):
         result = subprocess.run(git_params, cwd=repo_path, stdout=subprocess.PIPE, text=True, check=True)
         changed_files = result.stdout.splitlines()
 
-        # Извлекаем уникальные измененные папки
-        changed_folders = set()
+        # Извлекаем уникальные измененные папки с их родительскими категориями
+        changed_folders = []
         for file_path in changed_files:
             if file_path.startswith("addons/"):
+                category = "addons"
                 folder = file_path.split("/")[1]
-                changed_folders.add(folder)
+                changed_folders.append((folder, category))
+            elif file_path.startswith("addons core/"):
+                category = "addons core"
+                folder = file_path.split("/")[1]
+                changed_folders.append((folder, category))
+            elif file_path.startswith("addons islands/"):
+                category = "addons islands"
+                folder = file_path.split("/")[1]
+                changed_folders.append((folder, category))
+            elif file_path.startswith("server/"):
+                category = "server"
+                folder = file_path.split("/")[1]
+                changed_folders.append((folder, category))
 
         log_and_print(f"Измененные папки за последние {days} дней: {changed_folders}")
-        return list(changed_folders)
+        return changed_folders
     except subprocess.CalledProcessError as e:
         log_and_print(f"Ошибка при выполнении команды git: {e}", level="error")
         return []
-
 
 def clean_symlinks(custom_addons_folder, protected_folders):
     """
@@ -78,41 +91,48 @@ def clean_symlinks(custom_addons_folder, protected_folders):
 
 
 def create_symlinks(changed_folders, do_copy, custom_addons_folder, repo_path):
-    """Создание Junction Points для измененных папок."""
+    """Создание символических ссылок для измененных папок в указанной папке custom_addons_folder."""
     if not do_copy:
         log_and_print("Пропущено создание символических ссылок из-за флага -nc")
         return
 
+    # Защищенные папки, которые не нужно удалять
     protected_folders = ["mkk_sys"]
     clean_symlinks(custom_addons_folder, protected_folders)
 
-    # Путь к папке addons относительно repo_path
-    addons_dir = os.path.join(repo_path, "addons")
-    release_path = os.path.join(os.getcwd(), custom_addons_folder)
-    os.makedirs(release_path, exist_ok=True)
+    # Папка назначения, где будут создаваться символические ссылки
+    release_path = custom_addons_folder  # Используем уже указанный путь
+    os.makedirs(release_path, exist_ok=True)  # Убедимся, что целевая папка существует
 
-    log_and_print("\nСписок измененных папок в 'addons/':")
-    for folder in changed_folders:
-        folder_path = os.path.join(addons_dir, folder)
-        if os.path.isdir(folder_path):
-            log_and_print(f"  {folder}")
+    log_and_print("\nСписок измененных папок:")
+    for folder, category in changed_folders:
+        # Определяем полный путь к папке в репозитории
+        folder_path = os.path.join(repo_path, category, folder)  # Теперь добавляется и категория
+        symlink_path = os.path.join(release_path, folder)  # Путь символической ссылки
 
-            # Создаем Junction для каждой измененной папки
-            addon_dir = os.path.join(addons_dir, folder)
-            symlink_path = os.path.join(release_path, folder)
+        log_and_print(f"Путь к папке в репозитории: {folder_path}")
+        log_and_print(f"Путь для символической ссылки: {symlink_path}")
 
+        if not os.path.isdir(folder_path):
+            log_and_print(f"Ошибка: Папка {folder_path} не существует или не является директорией.", level="error")
+            continue
+
+        if os.path.exists(symlink_path):
+            log_and_print(f"Удаление существующей ссылки или папки: {symlink_path}")
             try:
-                if os.path.exists(symlink_path):
-                    log_and_print(f"Удаление существующей ссылки: {symlink_path}")
-                    if os.path.islink(symlink_path) or os.path.isdir(symlink_path) and not os.path.ismount(symlink_path):
-                        os.unlink(symlink_path)  # Удаляем Junction или символическую ссылку
-                    else:
-                        rmtree(symlink_path)  # Удаляем папку
-
-                os.system(f'mklink /J "{symlink_path}" "{addon_dir}"')
-                log_and_print(f"Junction создан для {addon_dir} в папке {release_path}")
+                if os.path.islink(symlink_path):
+                    os.unlink(symlink_path)
+                elif os.path.isdir(symlink_path):
+                    rmtree(symlink_path)
             except Exception as e:
-                log_and_print(f"Ошибка при создании Junction для {folder}: {e}", level="error")
+                log_and_print(f"Ошибка при удалении старой ссылки {symlink_path}: {e}", level="error")
+
+        try:
+            log_and_print(f"Создание символической ссылки: {symlink_path} -> {folder_path}")
+            os.system(f'mklink /J "{symlink_path}" "{folder_path}"')
+            log_and_print(f"Символическая ссылка создана: {symlink_path} -> {folder_path}")
+        except Exception as e:
+            log_and_print(f"Ошибка при создании символической ссылки для {folder}: {e}", level="error")
 
 
 def run_hemtt(custom_hemtt_path):
@@ -172,13 +192,49 @@ def obfuscate_files_with_shortcut(makepbo_shortcut, obfuscation_folders, addons_
             log_and_print(f"Ошибка при обфускации папки {folder_path}: {e}", level="error")
 
 
+def move_pbos_to_target(target_folder, changed_folders):
+    """Перемещает .pbo файлы в соответствующие папки для модов, островов, серверов и ядра."""
+    current_date = datetime.datetime.now().strftime("%Y-%m-%d")
+    update_base_path = os.path.join(target_folder, f"update_{current_date}")
+    os.makedirs(update_base_path, exist_ok=True)
+
+    # Папки для каждого типа .pbo файлов
+    move_to_paths = {
+        "addons": os.path.join(update_base_path, "@sg_mods", "addons"),
+        "addons islands": os.path.join(update_base_path, "@sg_islands", "addons"),
+        "addons core": os.path.join(update_base_path, "@sg_core", "addons"),
+        "server": os.path.join(update_base_path, "@sg_server", "addons"),
+    }
+
+    # Создаем целевые папки, если они не существуют
+    for path in move_to_paths.values():
+        os.makedirs(path, exist_ok=True)
+
+    # Перемещение файлов в соответствующие папки
+    for folder, category in changed_folders:
+        pbo_file_name = f"{folder}.pbo"
+        source_pbo_path = os.path.join(target_folder, pbo_file_name)
+
+        # Определяем правильную папку назначения
+        target_path = move_to_paths.get(category)
+        if target_path:
+            target_pbo_path = os.path.join(target_path, pbo_file_name)
+            try:
+                move(source_pbo_path, target_pbo_path)
+                log_and_print(f"Перемещен файл {pbo_file_name} из {category} в {target_path}")
+            except Exception as e:
+                log_and_print(f"Ошибка при перемещении файла {pbo_file_name}: {e}", level="error")
+        else:
+            log_and_print(f"Не удалось найти целевую папку для {category}. Пропуск.", level="warning")
+
+
 def main():
     repo_path = "F:\\Arma3\\github\\MKK-MODES"
     custom_addons_folder = "F:\\Arma3\\Realese\\addons"
     custom_hemtt_path = "F:\\Arma3\\Realese"
     custom_makepbo_shortcut = "F:\\Arma3\\Realese\\tools\\MakePbo2.lnk"
     target_folder = "F:\\Arma3\\Realese\\.hemttout\\release\\addons"
-    days = 7  # Задайте количество дней для сканирования изменений
+    days = 2  # Задайте количество дней для сканирования изменений
 
     # Найти измененные папки за последние N дней
     changed_folders = find_changed_folders(repo_path, days)
@@ -189,12 +245,14 @@ def main():
     do_copy = True
     log_and_print(f"Создание символических ссылок: {'включено' if do_copy else 'выключено'}")
 
-    create_symlinks(changed_folders, do_copy, custom_addons_folder, repo_path)
+    create_symlinks(changed_folders, do_copy, custom_addons_folder, repo_path)  # Передаем измененные папки
     run_hemtt(custom_hemtt_path)
 
     obfuscation_folders = find_obfuscation_folders(custom_addons_folder)
     if obfuscation_folders:
         obfuscate_files_with_shortcut(custom_makepbo_shortcut, obfuscation_folders, custom_addons_folder, target_folder)
+
+    move_pbos_to_target(target_folder, changed_folders)  # Передаем измененные папки
 
     log_and_print(Fore.GREEN + "РЕЛИЗ ПОДГОТОВЛЕН" + Style.RESET_ALL)
 
