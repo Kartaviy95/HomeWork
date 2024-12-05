@@ -172,7 +172,9 @@ def find_obfuscation_folders(addons_folder):
 
 
 def obfuscate_files_with_shortcut(makepbo_shortcut, obfuscation_folders, addons_folder, target_folder):
-    """Обфускация файлов через MakePbo, скрывая вывод."""
+    """Обфускация файлов через MakePbo, скрывая вывод и отображая шкалу выполнения для каждого файла."""
+
+    # Используем tqdm для отображения прогресса по обфускации
     for folder in obfuscation_folders:
         folder_path = os.path.join(addons_folder, folder)
         if not os.path.isdir(folder_path):
@@ -180,9 +182,18 @@ def obfuscate_files_with_shortcut(makepbo_shortcut, obfuscation_folders, addons_
             continue
 
         log_and_print(f"Запуск обфускации для папки: {folder_path}")
+
         try:
-            # Скрываем вывод команд
-            subprocess.run(["cmd", "/c", makepbo_shortcut, folder_path], check=True, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Применяем tqdm для отслеживания прогресса
+            # Можно сделать прогресс для каждого файла, если известно количество файлов.
+            # Но для этого примера мы просто показываем прогресс для каждой обфускации папки.
+
+            # Обновляем прогресс на каждом шаге
+            with tqdm(total=1, desc=f"Обфускация {folder}", ncols=100, bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}") as pbar:
+                subprocess.run(["cmd", "/c", makepbo_shortcut, folder_path], check=True, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                pbar.update(1)  # Обновляем прогресс
+
+            # Перемещение файла в целевую папку
             pbo_file_name = f"{folder}.pbo"
             source_pbo_path = os.path.join(addons_folder, pbo_file_name)
 
