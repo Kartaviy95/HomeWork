@@ -1,5 +1,6 @@
 ﻿import os
 import subprocess
+from tqdm import tqdm
 import datetime
 from shutil import rmtree, move
 from colorama import Fore, Style
@@ -171,7 +172,7 @@ def find_obfuscation_folders(addons_folder):
 
 
 def obfuscate_files_with_shortcut(makepbo_shortcut, obfuscation_folders, addons_folder, target_folder):
-    """Обфускация файлов через MakePbo."""
+    """Обфускация файлов через MakePbo, скрывая вывод."""
     for folder in obfuscation_folders:
         folder_path = os.path.join(addons_folder, folder)
         if not os.path.isdir(folder_path):
@@ -180,7 +181,8 @@ def obfuscate_files_with_shortcut(makepbo_shortcut, obfuscation_folders, addons_
 
         log_and_print(f"Запуск обфускации для папки: {folder_path}")
         try:
-            subprocess.run(["cmd", "/c", makepbo_shortcut, folder_path], check=True, shell=True)
+            # Скрываем вывод команд
+            subprocess.run(["cmd", "/c", makepbo_shortcut, folder_path], check=True, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             pbo_file_name = f"{folder}.pbo"
             source_pbo_path = os.path.join(addons_folder, pbo_file_name)
 
