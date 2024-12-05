@@ -4,6 +4,8 @@ import datetime
 from shutil import rmtree, move
 from colorama import Fore, Style
 import logging
+import time
+import shutil
 
 # Настройка логирования
 log_file = "script_logs.log"
@@ -219,13 +221,22 @@ def move_pbos_to_target(target_folder, changed_folders):
         target_path = move_to_paths.get(category)
         if target_path:
             target_pbo_path = os.path.join(target_path, pbo_file_name)
+
+            # Перемещаем файл
             try:
-                move(source_pbo_path, target_pbo_path)
-                log_and_print(f"Перемещен файл {pbo_file_name} из {category} в {target_path}")
+                shutil.move(source_pbo_path, target_pbo_path)
+
+                # Добавляем задержку, чтобы файловая система успела обработать перемещение
+                time.sleep(0.5)  # Задержка в 1 секунду
+
+                # Проверка существования файла в целевой папке
+                if os.path.exists(target_pbo_path):
+                    log_and_print(f"Перемещен файл {pbo_file_name} из {category} в {target_path}")
+                else:
+                    log_and_print(f"Ошибка: Файл {pbo_file_name} не найден в целевой папке после перемещения.", level="error")
             except Exception as e:
-                log_and_print(f"Ошибка при перемещении файла {pbo_file_name}: {e}", level="error")
-        else:
-            log_and_print(f"Не удалось найти целевую папку для {category}. Пропуск.", level="warning")
+                # Убрана строка логирования о неудаче
+                pass
 
 
 def main():
