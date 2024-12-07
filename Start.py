@@ -39,7 +39,7 @@ def find_changed_folders(repo_path, days):
         changed_files = result.stdout.splitlines()
 
         # Извлекаем уникальные измененные папки с их родительскими категориями
-        changed_folders = []
+        changed_folders = set()  # Используем set для исключения дублирующихся папок
         for file_path in changed_files:
             # Добавляем только те папки, которые не являются 'cTab'
             if file_path.startswith("addons/"):
@@ -47,24 +47,24 @@ def find_changed_folders(repo_path, days):
                 folder = file_path.split("/")[1]
                 if folder.lower() == "ctab":  # Исключаем папку 'cTab'
                     continue
-                changed_folders.append((folder, category))
+                changed_folders.add((folder, category))
             elif file_path.startswith("addons core/"):
                 category = "addons core"
                 folder = file_path.split("/")[1]
                 if folder.lower() == "ctab":  # Исключаем папку 'cTab'
                     continue
-                changed_folders.append((folder, category))
+                changed_folders.add((folder, category))
             elif file_path.startswith("addons islands/"):
                 category = "addons islands"
                 folder = file_path.split("/")[1]
-                changed_folders.append((folder, category))
+                changed_folders.add((folder, category))
             elif file_path.startswith("server/"):
                 category = "server"
                 folder = file_path.split("/")[1]
-                changed_folders.append((folder, category))
+                changed_folders.add((folder, category))
 
-        log_and_print(f"Измененные папки за последние {days} дней (исключая cTab): {changed_folders}")
-        return changed_folders
+        log_and_print(f"Измененные папки за последние {days} дней (исключая cTab): {list(changed_folders)}")
+        return list(changed_folders)  # Преобразуем set в list для дальнейшей обработки
     except subprocess.CalledProcessError as e:
         log_and_print(f"Ошибка при выполнении команды git: {e}", level="error")
         return []
@@ -119,11 +119,22 @@ def create_symlinks(changed_folders, do_copy, custom_addons_folder, repo_path):
     os.makedirs(release_path, exist_ok=True)  # Убедимся, что целевая папка существует
 
     log_and_print("\nСписок измененных папок:")
+
+    # Группируем изменения по папкам, чтобы создать символическую ссылку только для папки
+    processed_folders = set()  # Используем set для предотвращения повторного создания ссылок для одной папки
+
     for folder, category in changed_folders:
         # Пропускаем папку cTab или другие защищенные папки
         if folder.lower() in protected_folders:
             log_and_print(f"Пропуск создания символической ссылки для защищенной папки: {folder}")
             continue
+
+        # Пропускаем папки, для которых уже была создана ссылка
+        if folder in processed_folders:
+            continue
+
+        # Добавляем папку в список обработанных
+        processed_folders.add(folder)
 
         # Определяем полный путь к папке в репозитории
         folder_path = os.path.join(repo_path, category, folder)
@@ -141,18 +152,8 @@ def create_symlinks(changed_folders, do_copy, custom_addons_folder, repo_path):
         if os.path.exists(symlink_path):
             pass
 
-            try:
-                # Если это символическая ссылка, удаляем её с помощью os.unlink
-                if os.path.islink(symlink_path):
-                    os.unlink(symlink_path)  # Удаляем символическую ссылку
-                # Если это директория, удаляем её с помощью rmtree
-                elif os.path.isdir(symlink_path):
-                    rmtree(symlink_path)  # Удаляем директорию
-            except Exception as e:
-                pass
-
-        # Создание символической ссылки с помощью mklink /J (для папок)
         try:
+            # Создание символической ссылки с помощью mklink /J (для папок)
             log_and_print(f"Создание символической ссылки (Junction): {symlink_path} -> {folder_path}")
             os.system(f'mklink /J "{symlink_path}" "{folder_path}"')
 
@@ -235,7 +236,7 @@ def obfuscate_files_with_shortcut(makepbo_shortcut, obfuscation_folders, addons_
 
 
 def move_pbos_to_target(target_folder, changed_folders):
-    """Перемещает .pbo файлы в соответствующие папки для модов, островов, серверов и ядра."""
+    """Перемещает .pbo файлы в соответствующие папки для модов, островов, серверов и ядра, затем удаляет оставшиеся .pbo файлы в target_folder."""
     current_date = datetime.datetime.now().strftime("%Y-%m-%d")
     update_base_path = os.path.join(target_folder, f"update_{current_date}")
     os.makedirs(update_base_path, exist_ok=True)
@@ -262,21 +263,31 @@ def move_pbos_to_target(target_folder, changed_folders):
         if target_path:
             target_pbo_path = os.path.join(target_path, pbo_file_name)
 
-            # Перемещаем файл
             try:
-                shutil.move(source_pbo_path, target_pbo_path)
-
-                # Добавляем задержку, чтобы файловая система успела обработать перемещение
-                time.sleep(0.5)  # Задержка в 1 секунду
-
-                # Проверка существования файла в целевой папке
-                if os.path.exists(target_pbo_path):
+                # Проверяем, существует ли исходный файл перед перемещением
+                if os.path.exists(source_pbo_path):
+                    shutil.move(source_pbo_path, target_pbo_path)
                     log_and_print(f"Перемещен файл {pbo_file_name} из {category} в {target_path}")
                 else:
-                    log_and_print(f"Ошибка: Файл {pbo_file_name} не найден в целевой папке после перемещения.", level="error")
+                    log_and_print(f"Файл {pbo_file_name} не найден в {target_folder}", level="warning")
             except Exception as e:
-                # Убрана строка логирования о неудаче
-                pass
+                log_and_print(f"Ошибка при перемещении {pbo_file_name}: {e}", level="error")
+
+    # Удаление оставшихся .pbo файлов в target_folder
+    log_and_print(f"\nУдаление оставшихся .pbo файлов в {target_folder}...")
+    for file_name in os.listdir(target_folder):
+        if file_name.endswith(".pbo"):
+            file_path = os.path.join(target_folder, file_name)
+            try:
+                # Проверяем, существует ли файл перед удалением
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    log_and_print(f"Файл {file_name} удалён из {target_folder}")
+            except Exception as e:
+                log_and_print(f"Ошибка при удалении {file_name} из {target_folder}: {e}", level="error")
+
+
+
 
 
 def main():
