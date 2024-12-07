@@ -30,8 +30,7 @@ def log_and_print(message, level="info"):
 
 def find_changed_folders(repo_path, days):
     """
-    Определяет измененные папки в репозитории за последние 'days' дней, включая папки addons_core, addons_islands и server.
-    Возвращает список кортежей вида (папка, категория), где категория это родительская папка.
+    Определяет измененные папки в репозитории за последние 'days' дней, исключая папки с именем 'cTab'.
     """
     git_after = (datetime.datetime.now() - datetime.timedelta(days=days)).strftime("%Y-%m-%d")
     git_params = ["git", "log", "--after", git_after, "--name-only", "--no-merges"]
@@ -42,13 +41,18 @@ def find_changed_folders(repo_path, days):
         # Извлекаем уникальные измененные папки с их родительскими категориями
         changed_folders = []
         for file_path in changed_files:
+            # Добавляем только те папки, которые не являются 'cTab'
             if file_path.startswith("addons/"):
                 category = "addons"
                 folder = file_path.split("/")[1]
+                if folder.lower() == "ctab":  # Исключаем папку 'cTab'
+                    continue
                 changed_folders.append((folder, category))
             elif file_path.startswith("addons core/"):
                 category = "addons core"
                 folder = file_path.split("/")[1]
+                if folder.lower() == "ctab":  # Исключаем папку 'cTab'
+                    continue
                 changed_folders.append((folder, category))
             elif file_path.startswith("addons islands/"):
                 category = "addons islands"
@@ -59,19 +63,22 @@ def find_changed_folders(repo_path, days):
                 folder = file_path.split("/")[1]
                 changed_folders.append((folder, category))
 
-        log_and_print(f"Измененные папки за последние {days} дней: {changed_folders}")
+        log_and_print(f"Измененные папки за последние {days} дней (исключая cTab): {changed_folders}")
         return changed_folders
     except subprocess.CalledProcessError as e:
         log_and_print(f"Ошибка при выполнении команды git: {e}", level="error")
         return []
 
+
+
 def clean_symlinks(custom_addons_folder, protected_folders):
     """
-    Очистка устаревших папок и Junction ссылок в custom_addons_folder,
+    Очистка всех папок и Junction ссылок в custom_addons_folder,
     за исключением защищенных папок.
     """
     log_and_print(f"Очистка папок и Junction ссылок в {custom_addons_folder}...")
 
+    # Проходим по всем папкам в custom_addons_folder
     for folder in os.listdir(custom_addons_folder):
         folder_path = os.path.join(custom_addons_folder, folder)
 
@@ -80,15 +87,20 @@ def clean_symlinks(custom_addons_folder, protected_folders):
             log_and_print(f"Пропуск защищенной папки: {folder_path}")
             continue
 
-        # Удаляем папки или Junction
         try:
             log_and_print(f"Удаление папки или Junction: {folder_path}")
-            if os.path.islink(folder_path) or (os.path.isdir(folder_path) and not os.path.ismount(folder_path)):
-                os.unlink(folder_path)  # Удаляем Junction или символическую ссылку
+
+            # Если это символическая ссылка, удаляем её с помощью os.unlink
+            if os.path.islink(folder_path):
+                os.unlink(folder_path)  # Удаляем символическую ссылку
+            # Если это директория, удаляем её с помощью rmtree
             elif os.path.isdir(folder_path):
                 rmtree(folder_path)  # Удаляем папку
+            # Если это файл, удаляем его
+            elif os.path.isfile(folder_path):
+                os.remove(folder_path)  # Удаляем файл
             else:
-                log_and_print(f"{folder_path} не является ссылкой или папкой. Пропуск.")
+                log_and_print(f"{folder_path} не является ссылкой, папкой или файлом. Пропуск.")
         except Exception as e:
             log_and_print(f"Ошибка при удалении {folder_path}: {e}", level="error")
 
@@ -100,8 +112,7 @@ def create_symlinks(changed_folders, do_copy, custom_addons_folder, repo_path):
         return
 
     # Защищенные папки, которые не нужно удалять
-    protected_folders = ["mkk_sys"]
-    clean_symlinks(custom_addons_folder, protected_folders)
+    protected_folders = ["mkk_sys", "cTab", "mkk_grad_trenches_main"]  # Добавляем cTab и mkk_sys в список защищенных папок
 
     # Папка назначения, где будут создаваться символические ссылки
     release_path = custom_addons_folder  # Используем уже указанный путь
@@ -109,31 +120,47 @@ def create_symlinks(changed_folders, do_copy, custom_addons_folder, repo_path):
 
     log_and_print("\nСписок измененных папок:")
     for folder, category in changed_folders:
+        # Пропускаем папку cTab или другие защищенные папки
+        if folder.lower() in protected_folders:
+            log_and_print(f"Пропуск создания символической ссылки для защищенной папки: {folder}")
+            continue
+
         # Определяем полный путь к папке в репозитории
-        folder_path = os.path.join(repo_path, category, folder)  # Теперь добавляется и категория
-        symlink_path = os.path.join(release_path, folder)  # Путь символической ссылки
+        folder_path = os.path.join(repo_path, category, folder)
+        symlink_path = os.path.join(custom_addons_folder, folder)
 
         log_and_print(f"Путь к папке в репозитории: {folder_path}")
         log_and_print(f"Путь для символической ссылки: {symlink_path}")
 
-        if not os.path.isdir(folder_path):
-            log_and_print(f"Ошибка: Папка {folder_path} не существует или не является директорией.", level="error")
+        # Проверяем, существует ли уже символическая ссылка
+        if os.path.islink(symlink_path):
+            log_and_print(f"Символическая ссылка уже существует: {symlink_path}. Пропуск создания.")
             continue
 
+        # Проверяем существование ссылки или папки
         if os.path.exists(symlink_path):
-            log_and_print(f"Удаление существующей ссылки или папки: {symlink_path}")
+            pass
+
             try:
+                # Если это символическая ссылка, удаляем её с помощью os.unlink
                 if os.path.islink(symlink_path):
-                    os.unlink(symlink_path)
+                    os.unlink(symlink_path)  # Удаляем символическую ссылку
+                # Если это директория, удаляем её с помощью rmtree
                 elif os.path.isdir(symlink_path):
-                    rmtree(symlink_path)
+                    rmtree(symlink_path)  # Удаляем директорию
             except Exception as e:
                 pass
 
+        # Создание символической ссылки с помощью mklink /J (для папок)
         try:
-            log_and_print(f"Создание символической ссылки: {symlink_path} -> {folder_path}")
+            log_and_print(f"Создание символической ссылки (Junction): {symlink_path} -> {folder_path}")
             os.system(f'mklink /J "{symlink_path}" "{folder_path}"')
-            log_and_print(f"Символическая ссылка создана: {symlink_path} -> {folder_path}")
+
+            # Проверка, создана ли символическая ссылка
+            if os.path.islink(symlink_path):
+                log_and_print(f"Символическая ссылка успешно создана: {symlink_path} -> {folder_path}")
+            else:
+                log_and_print(f"Не удалось создать символическую ссылку: {symlink_path}", level="error")
         except Exception as e:
             log_and_print(f"Ошибка при создании символической ссылки для {folder}: {e}", level="error")
 
