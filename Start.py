@@ -6,8 +6,9 @@ import datetime
 from shutil import rmtree, move
 from colorama import Fore, Style
 import logging
-import time
 import shutil
+import ctypes
+import win32file
 
 # Настройка логирования
 log_file = "script_logs.log"
@@ -46,13 +47,13 @@ def find_changed_folders(repo_path, days):
             if file_path.startswith("addons/"):
                 category = "addons"
                 folder = file_path.split("/")[1]
-                if folder.lower() == "ctab":  # Исключаем папку 'cTab'
+                if folder.lower() == "cTab":  # Исключаем папку 'cTab'
                     continue
                 changed_folders.add((folder, category))
             elif file_path.startswith("addons core/"):
                 category = "addons core"
                 folder = file_path.split("/")[1]
-                if folder.lower() == "ctab":  # Исключаем папку 'cTab'
+                if folder.lower() == "cTab":  # Исключаем папку 'cTab'
                     continue
                 changed_folders.add((folder, category))
             elif file_path.startswith("addons islands/"):
@@ -105,21 +106,45 @@ def clean_symlinks(custom_addons_folder, protected_folders):
         except Exception as e:
             log_and_print(f"Ошибка при удалении {folder_path}: {e}", level="error")
 
+def create_junction_alternative(src_dir, dst_dir):
+    try:
+        ctypes.windll.kernel32.CreateSymbolicLinkW(dst_dir, src_dir, 1)
+        log_and_print(f"Создана ссылка (альтернативный метод): {src_dir} -> {dst_dir}")
+    except Exception as e:
+        log_and_print(f"Ошибка создания Junction (альтернативный метод): {e}", level="error")
 
 def create_junction(src_dir, dst_dir):
     """
-    Создаёт Junction link для папки с использованием _winapi.
+    Создаёт Junction link для папки с использованием _winapi, с исключением папки cTab.
     """
     src_dir = os.path.normpath(os.path.realpath(src_dir))
     dst_dir = os.path.normpath(os.path.realpath(dst_dir))
 
-    # Проверка на существование целевой папки
-    if not os.path.exists(dst_dir):
+    # Исключение для папки cTab
+    if os.path.basename(src_dir).lower() == "ctab":
+        log_and_print(f"Пропуск создания ссылки для защищенной папки: {src_dir}")
+        return
+
+    if not os.path.exists(src_dir):
+        log_and_print(f"Ошибка: Исходная папка {src_dir} не существует.", level="error")
+        return
+
+    if os.path.exists(dst_dir):
+        if not os.path.isdir(dst_dir):
+            log_and_print(f"Ошибка: Целевая папка {dst_dir} не может быть создана. Уже существует файл.", level="error")
+            return
+        else:
+            log_and_print(f"Junction link уже существует: {dst_dir}")
+            return
+
+    try:
         os.makedirs(os.path.dirname(dst_dir), exist_ok=True)
         _winapi.CreateJunction(src_dir, dst_dir)
         log_and_print(f"Создан Junction link: {src_dir} -> {dst_dir}")
-    else:
-        log_and_print(f"Junction link уже существует: {dst_dir}")
+    except FileNotFoundError as e:
+        log_and_print(f"Ошибка при создании Junction: {e}", level="error")
+
+
 
 def create_symlinks(changed_folders, do_copy, custom_addons_folder, repo_path):
     """Создание символических ссылок для измененных папок в указанной папке custom_addons_folder."""
@@ -128,7 +153,7 @@ def create_symlinks(changed_folders, do_copy, custom_addons_folder, repo_path):
         return
 
     # Защищенные папки, которые не нужно удалять
-    protected_folders = ["mkk_sys", "cTab", "mkk_grad_trenches_main"]  # Добавляем cTab и mkk_sys в список защищенных папок
+    protected_folders = {"mkk_sys", "cTab", "mkk_grad_trenches_main"}  # Используем множество для быстрого поиска
 
     # Папка назначения, где будут создаваться символические ссылки
     release_path = custom_addons_folder  # Используем уже указанный путь
@@ -161,6 +186,7 @@ def create_symlinks(changed_folders, do_copy, custom_addons_folder, repo_path):
 
         # Создание Junction link для папки
         create_junction(folder_path, symlink_path)
+
 
 
 def run_hemtt(custom_hemtt_path):
@@ -196,9 +222,10 @@ def find_obfuscation_folders(addons_folder):
     return obfuscation_folders
 
 
-def obfuscate_files_with_shortcut(makepbo_shortcut, obfuscation_folders, addons_folder, target_folder):
-    """Обфускация файлов через MakePbo, скрывая вывод и отображая шкалу выполнения для каждого файла."""
-
+def obfuscate_files_with_shortcut(makepbo_bat_path, obfuscation_folders, addons_folder, target_folder):
+    """
+    Обфускация файлов через MakePbo (через .bat файл), скрывая вывод и отображая шкалу выполнения для каждого файла.
+    """
     # Используем tqdm для отслеживания прогресса по обфускации
     for folder in obfuscation_folders:
         folder_path = os.path.join(addons_folder, folder)
@@ -210,12 +237,9 @@ def obfuscate_files_with_shortcut(makepbo_shortcut, obfuscation_folders, addons_
 
         try:
             # Применяем tqdm для отслеживания прогресса
-            # Можно сделать прогресс для каждого файла, если известно количество файлов.
-            # Но для этого примера мы просто показываем прогресс для каждой обфускации папки.
-
-            # Обновляем прогресс на каждом шаге
             with tqdm(total=1, desc=f"Обфускация {folder}", ncols=100, bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}") as pbar:
-                subprocess.run(["cmd", "/c", makepbo_shortcut, folder_path], check=True, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                # Вызываем .bat файл с передачей пути к папке
+                subprocess.run(["cmd", "/c", makepbo_bat_path, folder_path], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 pbar.update(1)  # Обновляем прогресс
 
             # Перемещение файла в целевую папку
@@ -230,6 +254,7 @@ def obfuscate_files_with_shortcut(makepbo_shortcut, obfuscation_folders, addons_
                 log_and_print(f"Ошибка: .pbo файл {pbo_file_name} не найден после обфускации.", level="warning")
         except Exception as e:
             log_and_print(f"Ошибка при обфускации папки {folder_path}: {e}", level="error")
+
 
 
 def move_pbos_to_target(target_folder, changed_folders):
@@ -284,12 +309,17 @@ def move_pbos_to_target(target_folder, changed_folders):
                 log_and_print(f"Ошибка при удалении {file_name} из {target_folder}: {e}", level="error")
 
 def main():
+    # Путь до репозитория
     repo_path = r"F:\Arma3\github\MKK-MODES"
+    # Основная папка, где будет собираться все символические ссылки
     custom_addons_folder = r"F:\Arma3\Realese\addons"
+    # Путь до основны hemtt
     custom_hemtt_path = r"F:\Arma3\Realese"
-    custom_makepbo_shortcut = r"F:\Arma3\Realese\tools\MakePbo2.lnk"
+    # Путь до файла обфускации (поменять так же путь внутри .bat файла)
+    custom_makepbo_bat_path = r"F:\Arma3\Realese\tools\obf.bat"
+    # Путь до конечной папки, где будут создавать выходные .pbo файлы и папка с полным обновлением
     target_folder = r"F:\Arma3\Realese\.hemttout\release\addons"
-    days = 2  # Задайте количество дней для сканирования изменений
+    days = 31  # Задайте количество дней для сканирования изменений
 
     # Найти измененные папки за последние N дней
     changed_folders = find_changed_folders(repo_path, days)
@@ -305,7 +335,7 @@ def main():
 
     obfuscation_folders = find_obfuscation_folders(custom_addons_folder)
     if obfuscation_folders:
-        obfuscate_files_with_shortcut(custom_makepbo_shortcut, obfuscation_folders, custom_addons_folder, target_folder)
+        obfuscate_files_with_shortcut(custom_makepbo_bat_path, obfuscation_folders, custom_addons_folder, target_folder)
 
     move_pbos_to_target(target_folder, changed_folders)  # Передаем измененные папки
 
