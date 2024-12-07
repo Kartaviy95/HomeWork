@@ -283,16 +283,12 @@ def move_pbos_to_target(target_folder, changed_folders):
             except Exception as e:
                 log_and_print(f"Ошибка при удалении {file_name} из {target_folder}: {e}", level="error")
 
-
-
-
-
 def main():
-    repo_path = "F:\\Arma3\\github\\MKK-MODES"
-    custom_addons_folder = "F:\\Arma3\\Realese\\addons"
-    custom_hemtt_path = "F:\\Arma3\\Realese"
-    custom_makepbo_shortcut = r"F:\Arma3\Realese\tools\MakePbo2.exe.lnk"
-    target_folder = "F:\\Arma3\\Realese\\.hemttout\\release\\addons"
+    repo_path = r"F:\Arma3\github\MKK-MODES"
+    custom_addons_folder = r"F:\Arma3\Realese\addons"
+    custom_hemtt_path = r"F:\Arma3\Realese"
+    custom_makepbo_shortcut = r"F:\Arma3\Realese\tools\MakePbo2.lnk"
+    target_folder = r"F:\Arma3\Realese\.hemttout\release\addons"
     days = 2  # Задайте количество дней для сканирования изменений
 
     # Найти измененные папки за последние N дней
