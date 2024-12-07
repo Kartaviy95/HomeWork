@@ -1,5 +1,7 @@
 ﻿import os
+import sys
 import subprocess
+import ctypes
 from tqdm import tqdm
 import datetime
 from shutil import rmtree, move
@@ -7,8 +9,23 @@ from colorama import Fore, Style
 import logging
 import time
 import shutil
+import logging
+from shutil import rmtree
 
-# Настройка логирования
+# Проверка, запущен ли скрипт с правами администратора
+def is_admin():
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except:
+        return False
+
+if not is_admin():
+    # Повторный запуск скрипта с правами администратора
+    script = sys.argv[0]
+    ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, script, None, 1)
+    sys.exit(0)
+
+# Логирование
 log_file = "script_logs.log"
 logging.basicConfig(
     filename=log_file,
@@ -72,39 +89,28 @@ def find_changed_folders(repo_path, days):
 
 def clean_symlinks_in_addons_folder(addons_folder):
     """
-    Удаляет все символические ссылки в папке custom_addons_folder (addons),
-    за исключением защищенных папок.
+    Удаляет все символические ссылки в папке custom_addons_folder (addons), оставляя обычные папки.
     """
     log_and_print(f"Очистка всех символических ссылок в {addons_folder}...")
-
-    # Список защищенных папок
-    protected_folders = ["mkk_sys", "mkk_grad_trenches_main", "cTab"]  # Можете добавить другие защищенные папки
 
     # Проходим по всем файлам и папкам в указанной папке
     for item in os.listdir(addons_folder):
         item_path = os.path.join(addons_folder, item)
 
-        # Проверяем, является ли папка защищенной
-        if item.lower() in protected_folders:
-            log_and_print(f"Пропуск защищенной папки: {item_path}")
-            continue  # Пропускаем удаление защищенных папок
-
         try:
             # Если это символическая ссылка, удаляем её
             if os.path.islink(item_path):
-                os.unlink(item_path)
+                os.unlink(item_path)  # Удаление символической ссылки
                 log_and_print(f"Удалена символическая ссылка: {item_path}")
-            # Если это папка, рекурсивно удаляем её содержимое
-            elif os.path.isdir(item_path):
-                rmtree(item_path)
-                log_and_print(f"Удалена папка: {item_path}")
+            else:
+                log_and_print(f"Это не символическая ссылка: {item_path}")
         except Exception as e:
             log_and_print(f"Ошибка при удалении {item_path}: {e}", level="error")
 
 
 
 def create_symlinks(changed_folders, custom_addons_folder, repo_path):
-    """Создание символических ссылок для измененных папок в указанной папке custom_addons_folder."""
+    """Создание символических ссылок для измененных папок в указанной папке custom_addons_folder с использованием mklink /D."""
     log_and_print("Создание символических ссылок для измененных папок...")
 
     # Защищенные папки, которые не нужно удалять
@@ -146,30 +152,46 @@ def create_symlinks(changed_folders, custom_addons_folder, repo_path):
             pass
 
         try:
-            # Создание символической ссылки с помощью mklink /J (для папок)
-            log_and_print(f"Создание символической ссылки (Junction): {symlink_path} -> {folder_path}")
-            os.system(f'mklink /J "{symlink_path}" "{folder_path}"')
+            # Создание символической ссылки с помощью команды mklink /D
+            command = f"mklink /D \"{symlink_path}\" \"{folder_path}\""
+            log_and_print(f"Создание символической ссылки: {command}")
+            subprocess.run(command, check=True, shell=True)
 
             # Проверка, создана ли символическая ссылка
             if os.path.islink(symlink_path):
                 log_and_print(f"Символическая ссылка успешно создана: {symlink_path} -> {folder_path}")
             else:
                 log_and_print(f"Не удалось создать символическую ссылку: {symlink_path}", level="error")
-        except Exception as e:
+        except subprocess.CalledProcessError as e:
             log_and_print(f"Ошибка при создании символической ссылки для {folder}: {e}", level="error")
+
+
 
 
 def run_hemtt(custom_hemtt_path):
     r"""Запуск команды `.\tools\hemtt.exe release` из кастомного места."""
     try:
+        # Переход в рабочую директорию
         os.chdir(custom_hemtt_path)
+
+        # Формирование пути к hemtt.exe
         hemtt_path = os.path.join(custom_hemtt_path, "tools", "hemtt.exe")
+
+        # Проверка существования файла hemtt.exe
+        if not os.path.isfile(hemtt_path):
+            log_and_print(f"Файл hemtt.exe не найден по пути: {hemtt_path}", level="error")
+            return
+
+        # Запуск команды
         subprocess.run([hemtt_path, "release"], check=True)
         log_and_print("Команда 'hemtt release' успешно выполнена.")
     except subprocess.CalledProcessError as e:
-        log_and_print(f"Ошибка при выполнении hemtt.exe: {e}", level="error")
+        log_and_print(f"Ошибка при выполнении команды hemtt.exe: {e}", level="error")
     except FileNotFoundError as e:
-        log_and_print(f"Файл hemtt.exe не найден: {e}", level="error")
+        log_and_print(f"Не удалось найти hemtt.exe: {e}", level="error")
+    except Exception as e:
+        log_and_print(f"Неизвестная ошибка: {e}", level="error")
+
 
 
 def find_obfuscation_folders(addons_folder):
@@ -281,12 +303,13 @@ def move_pbos_to_target(target_folder, changed_folders):
 
 
 def main():
-    repo_path = "F:\\Arma3\\github\\MKK-MODES"
-    custom_addons_folder = "F:\\Arma3\\Realese\\addons"
-    custom_hemtt_path = "F:\\Arma3\\Realese"
-    custom_makepbo_shortcut = "F:\\Arma3\\Realese\\tools\\MakePbo2.lnk"
-    target_folder = "F:\\Arma3\\Realese\\.hemttout\\release\\addons"
-    days = 5  # Задайте количество дней для сканирования изменений
+    repo_path = r"F:\Arma3\github\MKK-MODES"
+    custom_addons_folder = r"F:\Arma3\Realese\addons"
+    custom_hemtt_path = r"F:\Arma3\Realese"
+    custom_makepbo_shortcut = r"F:\Arma3\Realese\tools\MakePbo2.lnk"
+    target_folder = r"F:\Arma3\Realese\.hemttout\release\addons"
+    days = 1  # Задайте количество дней для сканирования изменений
+
 
     # Найти измененные папки за последние N дней
     changed_folders = find_changed_folders(repo_path, days)
@@ -297,10 +320,10 @@ def main():
     do_copy = True
     log_and_print(f"Создание символических ссылок: {'включено' if do_copy else 'выключено'}")
 
-    # Шаг 1: Очистить все старые символические ссылки в custom_hemtt_path
+    # Очистить все старые символические ссылки в custom_addons_folder
     clean_symlinks_in_addons_folder(custom_addons_folder)
 
-    # Шаг 2: Создать символические ссылки для измененных папок
+    # Создать символические ссылки для измененных папок
     create_symlinks(changed_folders, custom_addons_folder, repo_path)  # Передаем измененные папки
     run_hemtt(custom_hemtt_path)
 
@@ -311,7 +334,6 @@ def main():
     move_pbos_to_target(target_folder, changed_folders)  # Передаем измененные папки
 
     log_and_print(Fore.GREEN + "РЕЛИЗ ПОДГОТОВЛЕН" + Style.RESET_ALL)
-
 
 if __name__ == "__main__":
     main()
