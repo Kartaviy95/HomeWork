@@ -128,7 +128,7 @@ def create_symlinks(changed_folders, do_copy, custom_addons_folder, repo_path):
                 elif os.path.isdir(symlink_path):
                     rmtree(symlink_path)
             except Exception as e:
-                log_and_print(f"Ошибка при удалении старой ссылки {symlink_path}: {e}", level="error")
+                pass
 
         try:
             log_and_print(f"Создание символической ссылки: {symlink_path} -> {folder_path}")
